@@ -10,68 +10,34 @@ namespace WpfApp1
     public partial class MainWindow : Window
     {
         private WriteableBitmap _bitmap;
-        private int _width;
-        private int _height;
+        private int _width, _height;
         private ModelData _model;
-
-        private float _rotationX = 0f;
-        private float _rotationY = 0f;
-        private const float RotationSpeed = 0.1f;
-        private Vector3 _cameraPos = new Vector3(0, 0, 5);
-        private float _cameraSpeed = 0.2f;
-
-        private bool _isRendering = false;
-
         private float[] _zBuffer;
-        private Vector3 _lightDir = Vector3.Normalize(new Vector3(0.5f, 1f, 0.8f));
 
+        private Texture _diffuseMap;
+        private Texture _normalMap;
+        private Texture _specularMap;
+
+        private float _rotationX = 0, _rotationY = 0;
+        private Vector3 _cameraPos = new Vector3(0, 0, 5);
         private Vector3 _lightPos = new Vector3(2f, 4f, 3f);
         private Vector3 _lightColor = new Vector3(1f, 1f, 1f);
-        private Vector3 _objectColor = new Vector3(0.8f, 0.7f, 0.6f);
 
-        private const float Ka = 0.15f;   
-        private const float Kd = 0.8f;    
-        private const float Ks = 0.5f;    
-        private const float Shininess = 32f;
+        private const float Ka = 0.2f, Kd = 0.7f, Shininess = 30f;
+        private bool _isRendering = false;
 
         public MainWindow()
         {
             InitializeComponent();
-            this.Loaded += OnWindowLoaded;
-            this.KeyDown += OnKeyDown;
-        }
-
-        private void OnKeyDown(object sender, System.Windows.Input.KeyEventArgs e)
-        {
-            if (_isRendering) return;
-
-            switch (e.Key)
-            {
-                case System.Windows.Input.Key.W: _cameraPos.Z -= _cameraSpeed; break;
-                case System.Windows.Input.Key.S: _cameraPos.Z += _cameraSpeed; break;
-                case System.Windows.Input.Key.A: _cameraPos.X -= _cameraSpeed; break;
-                case System.Windows.Input.Key.D: _cameraPos.X += _cameraSpeed; break;
-
-                case System.Windows.Input.Key.Q:
-                    _cameraPos.Y -= _cameraSpeed; break;
-                case System.Windows.Input.Key.E:
-                    _cameraPos.Y += _cameraSpeed; break;
-
-                case System.Windows.Input.Key.Up: _rotationX -= RotationSpeed; break;
-                case System.Windows.Input.Key.Down: _rotationX += RotationSpeed; break;
-                case System.Windows.Input.Key.Left: _rotationY -= RotationSpeed; break;
-                case System.Windows.Input.Key.Right: _rotationY += RotationSpeed; break;
-            }
-
-            RenderModel(_model);
+            Loaded += OnWindowLoaded;
+            KeyDown += OnKeyDown;
         }
 
         private void OnWindowLoaded(object sender, RoutedEventArgs e)
         {
             _width = (int)gridDisplay.ActualWidth;
             _height = (int)gridDisplay.ActualHeight;
-
-            if (_width <= 0 || _height <= 0) return;
+            if (_width <= 0) return;
 
             _bitmap = new WriteableBitmap(_width, _height, 96, 96, PixelFormats.Bgr32, null);
             imageContainer.Source = _bitmap;
@@ -79,99 +45,33 @@ namespace WpfApp1
 
             try
             {
-                string path = System.IO.Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "human.obj");
-                if (System.IO.File.Exists(path))
-                {
-                    _model = ObjLoader.Load(path);
-                    RenderModel(_model);
-                }
+                _model = ObjLoader.Load("african_head.obj");
+                _diffuseMap = new Texture("african_head_diffuse.png");
+                _normalMap = new Texture("african_head_nm.png");
+                _specularMap = new Texture("african_head_spec.png");
+                RenderModel();
             }
-            catch (Exception ex)
+            catch (Exception ex) { MessageBox.Show(ex.Message); }
+        }
+
+        private void OnKeyDown(object sender, System.Windows.Input.KeyEventArgs e)
+        {
+            if (_isRendering) return;
+            switch (e.Key)
             {
-                MessageBox.Show($"Ошибка: {ex.Message}");
+                case System.Windows.Input.Key.W: _cameraPos.Z -= 0.2f; break;
+                case System.Windows.Input.Key.S: _cameraPos.Z += 0.2f; break;
+                case System.Windows.Input.Key.Left: _rotationY -= 0.1f; break;
+                case System.Windows.Input.Key.Right: _rotationY += 0.1f; break;
+                case System.Windows.Input.Key.Up: _rotationX -= 0.1f; break;
+                case System.Windows.Input.Key.Down: _rotationX += 0.1f; break;
             }
+            RenderModel();
         }
 
-        private unsafe void DrawLineBresenham(int* buffer, int x1, int y1, int x2, int y2, int color, int stride)
+        private unsafe void RenderModel()
         {
-            if (Math.Abs(x1) > 10000 || Math.Abs(y1) > 10000 || Math.Abs(x2) > 10000 || Math.Abs(y2) > 10000) return;
-
-            int dx = Math.Abs(x2 - x1);
-            int dy = Math.Abs(y2 - y1);
-            int sx = x1 < x2 ? 1 : -1;
-            int sy = y1 < y2 ? 1 : -1;
-            int err = dx - dy;
-
-            while (true)
-            {
-                if (x1 >= 0 && x1 < _width && y1 >= 0 && y1 < _height)
-                {
-                    buffer[y1 * stride + x1] = color;
-                }
-
-                if (x1 == x2 && y1 == y2) break;
-
-                int e2 = 2 * err;
-                if (e2 > -dy) { err -= dy; x1 += sx; }
-                if (e2 < dx) { err += dx; y1 += sy; }
-            }
-        }
-
-        private unsafe void FillTriangle(int* buffer, int stride,
-            int x1, int y1, int x2, int y2, int x3, int y3, int color)
-        {
-            if (y1 > y2) { (x1, x2) = (x2, x1); (y1, y2) = (y2, y1); }
-            if (y1 > y3) { (x1, x3) = (x3, x1); (y1, y3) = (y3, y1); }
-            if (y2 > y3) { (x2, x3) = (x3, x2); (y2, y3) = (y3, y2); }
-
-            int totalHeight = y3 - y1;
-            if (totalHeight == 0) return;
-
-            int segmentHeight = y2 - y1;
-            for (int y = y1; y <= y2; y++)
-            {
-                if (y < 0 || y >= _height) continue;
-                float alpha = (float)(y - y1) / totalHeight;
-                float beta = segmentHeight == 0 ? 1f : (float)(y - y1) / segmentHeight;
-                int xA = x1 + (int)((x3 - x1) * alpha); 
-                int xB = x1 + (int)((x2 - x1) * beta);  
-                if (xA > xB) (xA, xB) = (xB, xA);
-                for (int x = Math.Max(xA, 0); x <= Math.Min(xB, _width - 1); x++)
-                    buffer[y * stride + x] = color;
-            }
-
-            segmentHeight = y3 - y2;
-            for (int y = y2; y <= y3; y++)
-            {
-                if (y < 0 || y >= _height) continue;
-                float alpha = (float)(y - y1) / totalHeight;
-                float beta = segmentHeight == 0 ? 1f : (float)(y - y2) / segmentHeight;
-                int xA = x1 + (int)((x3 - x1) * alpha); 
-                int xB = x2 + (int)((x3 - x2) * beta);  
-                if (xA > xB) (xA, xB) = (xB, xA);
-                for (int x = Math.Max(xA, 0); x <= Math.Min(xB, _width - 1); x++)
-                    buffer[y * stride + x] = color;
-            }
-        }
-
-        private Matrix4x4 CreateModelMatrix()
-        {
-            return Matrix4x4.CreateRotationY(_rotationY) * Matrix4x4.CreateRotationX(_rotationX);
-        }
-
-        private Matrix4x4 CreateFullMatrix()
-        {
-            Matrix4x4 model = CreateModelMatrix();
-            Vector3 target = new Vector3(_cameraPos.X, _cameraPos.Y, 0);
-            Matrix4x4 view = Matrix4x4.CreateLookAt(_cameraPos, target, Vector3.UnitY);
-            float aspect = (float)_width / _height;
-            Matrix4x4 projection = Matrix4x4.CreatePerspectiveFieldOfView(MathF.PI / 4, aspect, 0.1f, 100f);
-            return model * view * projection;
-        }
-
-        private unsafe void RenderModel(ModelData model)
-        {
-            if (model == null || _isRendering) return;
+            if (_model == null || _isRendering) return;
             _isRendering = true;
 
             _bitmap.Lock();
@@ -181,52 +81,29 @@ namespace WpfApp1
             NativeMemory.Clear(buffer, (nuint)(_height * stride * sizeof(int)));
             Array.Fill(_zBuffer, float.MaxValue);
 
-            Matrix4x4 modelMatrix = CreateModelMatrix();
-            Matrix4x4 mvp = CreateFullMatrix();
+            Matrix4x4 modelMat = Matrix4x4.CreateRotationY(_rotationY) * Matrix4x4.CreateRotationX(_rotationX);
+            Matrix4x4 viewMat = Matrix4x4.CreateLookAt(_cameraPos, new Vector3(_cameraPos.X, _cameraPos.Y, 0), Vector3.UnitY);
+            Matrix4x4 projMat = Matrix4x4.CreatePerspectiveFieldOfView(MathF.PI / 4, (float)_width / _height, 0.1f, 100f);
+            Matrix4x4 mvp = modelMat * viewMat * projMat;
 
-            foreach (var face in model.Faces)
+            foreach (var face in _model.Faces)
             {
-                Vector4 c1 = ProjectToClip(model.Vertices[face.V1], mvp);
-                Vector4 c2 = ProjectToClip(model.Vertices[face.V2], mvp);
-                Vector4 c3 = ProjectToClip(model.Vertices[face.V3], mvp);
+                Vector4 c1 = Vector4.Transform(new Vector4(_model.Vertices[face.V1], 1), mvp);
+                Vector4 c2 = Vector4.Transform(new Vector4(_model.Vertices[face.V2], 1), mvp);
+                Vector4 c3 = Vector4.Transform(new Vector4(_model.Vertices[face.V3], 1), mvp);
 
                 if (c1.W < 0.1f || c2.W < 0.1f || c3.W < 0.1f) continue;
+                float sx1 = (c1.X / c1.W + 1) * 0.5f * _width, sy1 = (1 - c1.Y / c1.W) * 0.5f * _height;
+                float sx2 = (c2.X / c2.W + 1) * 0.5f * _width, sy2 = (1 - c2.Y / c2.W) * 0.5f * _height;
+                float sx3 = (c3.X / c3.W + 1) * 0.5f * _width, sy3 = (1 - c3.Y / c3.W) * 0.5f * _height;
 
-                // NDC → screen
-                float nx1 = c1.X / c1.W, ny1 = c1.Y / c1.W;
-                float nx2 = c2.X / c2.W, ny2 = c2.Y / c2.W;
-                float nx3 = c3.X / c3.W, ny3 = c3.Y / c3.W;
+                if ((sx2 - sx1) * (sy3 - sy1) - (sx3 - sx1) * (sy2 - sy1) >= 0) continue;
 
-                float sx1 = (nx1 + 1f) * 0.5f * _width, sy1 = (1f - ny1) * 0.5f * _height;
-                float sx2 = (nx2 + 1f) * 0.5f * _width, sy2 = (1f - ny2) * 0.5f * _height;
-                float sx3 = (nx3 + 1f) * 0.5f * _width, sy3 = (1f - ny3) * 0.5f * _height;
-
-                // Back-face culling
-                float area = (sx2 - sx1) * (sy3 - sy1) - (sx3 - sx1) * (sy2 - sy1);
-                if (area == 0) continue;
-
-                Vector3 w1 = Vector3.Transform(model.Vertices[face.V1], modelMatrix);
-                Vector3 w2 = Vector3.Transform(model.Vertices[face.V2], modelMatrix);
-                Vector3 w3 = Vector3.Transform(model.Vertices[face.V3], modelMatrix);
-
-                Vector3 faceNormal = Vector3.Normalize(Vector3.Cross(w2 - w1, w3 - w1));
-                Vector3 viewDir = Vector3.Normalize(w1 - _cameraPos);
-                if (Vector3.Dot(faceNormal, viewDir) >= 0) continue;
-
-                float z1 = c1.Z / c1.W;
-                float z2 = c2.Z / c2.W;
-                float z3 = c3.Z / c3.W;
-
-                Vector3 wn1 = Vector3.Normalize(Vector3.TransformNormal(model.Normals[face.N1], modelMatrix));
-                Vector3 wn2 = Vector3.Normalize(Vector3.TransformNormal(model.Normals[face.N2], modelMatrix));
-                Vector3 wn3 = Vector3.Normalize(Vector3.TransformNormal(model.Normals[face.N3], modelMatrix));
-
-                FillTriangleZ(buffer, stride,
-                    sx1, sy1, z1,
-                    sx2, sy2, z2,
-                    sx3, sy3, z3,
-                    wn1, wn2, wn3,
-                    w1, w2, w3);
+                FillTriangleCorrected(buffer, stride,
+                    sx1, sy1, c1.Z / c1.W, c1.W, _model.TexCoords[face.T1], Vector3.Transform(_model.Vertices[face.V1], modelMat),
+                    sx2, sy2, c2.Z / c2.W, c2.W, _model.TexCoords[face.T2], Vector3.Transform(_model.Vertices[face.V2], modelMat),
+                    sx3, sy3, c3.Z / c3.W, c3.W, _model.TexCoords[face.T3], Vector3.Transform(_model.Vertices[face.V3], modelMat),
+                    modelMat);
             }
 
             _bitmap.AddDirtyRect(new Int32Rect(0, 0, _width, _height));
@@ -234,141 +111,113 @@ namespace WpfApp1
             _isRendering = false;
         }
 
-        private Point Project(Vector3 vertex, Matrix4x4 mvp, out bool isVisible)
+        private unsafe void FillTriangleCorrected(int* buffer, int stride,
+    float x1, float y1, float z1, float w1, Vector2 uv1, Vector3 p1,
+    float x2, float y2, float z2, float w2, Vector2 uv2, Vector3 p2,
+    float x3, float y3, float z3, float w3, Vector2 uv3, Vector3 p3, Matrix4x4 modelMat)
         {
-            Vector4 clipSpace = Vector4.Transform(new Vector4(vertex, 1.0f), mvp);
-            if (clipSpace.W < 0.1f)
-            {
-                isVisible = false;
-                return new Point(0, 0);
-            }
+            void Swap(ref float a, ref float b) { float t = a; a = b; b = t; }
+            void SwapV2(ref Vector2 a, ref Vector2 b) { Vector2 t = a; a = b; b = t; }
+            void SwapV3(ref Vector3 a, ref Vector3 b) { Vector3 t = a; a = b; b = t; }
 
-            isVisible = true;
-            float x_ndc = clipSpace.X / clipSpace.W;
-            float y_ndc = clipSpace.Y / clipSpace.W;
+            if (y1 > y2) { Swap(ref x1, ref x2); Swap(ref y1, ref y2); Swap(ref z1, ref z2); Swap(ref w1, ref w2); SwapV2(ref uv1, ref uv2); SwapV3(ref p1, ref p2); }
+            if (y1 > y3) { Swap(ref x1, ref x3); Swap(ref y1, ref y3); Swap(ref z1, ref z3); Swap(ref w1, ref w3); SwapV2(ref uv1, ref uv3); SwapV3(ref p1, ref p3); }
+            if (y2 > y3) { Swap(ref x2, ref x3); Swap(ref y2, ref y3); Swap(ref z2, ref z3); Swap(ref w2, ref w3); SwapV2(ref uv2, ref uv3); SwapV3(ref p2, ref p3); }
 
-            float x_screen = (x_ndc + 1.0f) * 0.5f * _width;
-            float y_screen = (1.0f - y_ndc) * 0.5f * _height;
+            float invW1 = 1f / w1, invW2 = 1f / w2, invW3 = 1f / w3;
+            Vector2 uvW1 = uv1 * invW1, uvW2 = uv2 * invW2, uvW3 = uv3 * invW3;
+            Vector3 pW1 = p1 * invW1, pW2 = p2 * invW2, pW3 = p3 * invW3;
 
-            return new Point(x_screen, y_screen);
-        }
-
-        private Vector4 ProjectToClip(Vector3 vertex, Matrix4x4 mvp)
-        {
-            return Vector4.Transform(new Vector4(vertex, 1.0f), mvp);
-        }
-
-        private int ComputePhongColor(Vector3 normal, Vector3 fragPos)
-        {
-            Vector3 ambient = Ka * _lightColor;
-
-            Vector3 lightDir = Vector3.Normalize(_lightPos - fragPos);
-            float diff = MathF.Max(Vector3.Dot(normal, lightDir), 0f);
-            Vector3 diffuse = Kd * diff * _lightColor;
-
-            Vector3 viewDir = Vector3.Normalize(_cameraPos - fragPos);
-
-            Vector3 reflectDir = Vector3.Reflect(-lightDir, normal);
-            float spec = MathF.Pow(MathF.Max(Vector3.Dot(viewDir, reflectDir), 0f), Shininess);
-            Vector3 specular = Ks * spec * _lightColor;
-
-            Vector3 result = (ambient + diffuse + specular) * _objectColor;
-
-            int r = (int)(Math.Clamp(result.X, 0f, 1f) * 255f);
-            int g = (int)(Math.Clamp(result.Y, 0f, 1f) * 255f);
-            int b = (int)(Math.Clamp(result.Z, 0f, 1f) * 255f);
-
-            return unchecked((int)(0xFF000000u | ((uint)r << 16) | ((uint)g << 8) | (uint)b));
-        }
-
-        private unsafe void FillTriangleZ(int* buffer, int stride,
-            float x1, float y1, float z1,
-            float x2, float y2, float z2,
-            float x3, float y3, float z3,
-            Vector3 n1, Vector3 n2, Vector3 n3,
-            Vector3 p1, Vector3 p2, Vector3 p3)
-        {
-            if (y1 > y2) { (x1, x2) = (x2, x1); (y1, y2) = (y2, y1); (z1, z2) = (z2, z1); (n1, n2) = (n2, n1); (p1, p2) = (p2, p1); }
-            if (y1 > y3) { (x1, x3) = (x3, x1); (y1, y3) = (y3, y1); (z1, z3) = (z3, z1); (n1, n3) = (n3, n1); (p1, p3) = (p3, p1); }
-            if (y2 > y3) { (x2, x3) = (x3, x2); (y2, y3) = (y3, y2); (z2, z3) = (z3, z2); (n2, n3) = (n3, n2); (p2, p3) = (p3, p2); }
-
-            int iy1 = (int)y1, iy2 = (int)y2, iy3 = (int)y3;
-            float totalH = y3 - y1;
-            if (totalH < 1f) return;
-
-            for (int y = iy1; y <= iy3; y++)
+            int totalHeight = (int)MathF.Round(y3) - (int)MathF.Round(y1);
+            for (int y = (int)MathF.Round(y1); y <= (int)MathF.Round(y3); y++)
             {
                 if (y < 0 || y >= _height) continue;
 
-                bool inBottom = y <= iy2;
-                float alpha = (y - y1) / totalH;
-                float beta = inBottom
-                    ? ((y2 - y1) < 1f ? 0f : (y - y1) / (y2 - y1))
-                    : ((y3 - y2) < 1f ? 0f : (y - y2) / (y3 - y2));
+                bool inBottom = y < (int)MathF.Round(y2);
+                float alpha = (float)(y - (int)MathF.Round(y1)) / (totalHeight == 0 ? 1 : totalHeight);
+
+                float segmentHeight = inBottom ?
+                    (int)MathF.Round(y2) - (int)MathF.Round(y1) :
+                    (int)MathF.Round(y3) - (int)MathF.Round(y2);
+
+                float beta = (float)(y - (inBottom ? (int)MathF.Round(y1) : (int)MathF.Round(y2))) / (segmentHeight == 0 ? 1 : segmentHeight);
 
                 float ax = x1 + (x3 - x1) * alpha;
                 float az = z1 + (z3 - z1) * alpha;
-                Vector3 an = Vector3.Normalize(n1 + (n3 - n1) * alpha);
-                Vector3 ap = p1 + (p3 - p1) * alpha;
+                float aw = invW1 + (invW3 - invW1) * alpha;
+                Vector2 auv = uvW1 + (uvW3 - uvW1) * alpha;
+                Vector3 ap = pW1 + (pW3 - pW1) * alpha;
 
-                float bx = inBottom
-                    ? x1 + (x2 - x1) * beta
-                    : x2 + (x3 - x2) * beta;
-                float bz = inBottom
-                    ? z1 + (z2 - z1) * beta
-                    : z2 + (z3 - z2) * beta;
-                Vector3 bn = Vector3.Normalize(inBottom
-                    ? n1 + (n2 - n1) * beta
-                    : n2 + (n3 - n2) * beta);
-                Vector3 bp = inBottom
-                    ? p1 + (p2 - p1) * beta
-                    : p2 + (p3 - p2) * beta;
+                float bx, bz, bw; Vector2 buv; Vector3 bp;
+                if (inBottom)
+                {
+                    bx = x1 + (x2 - x1) * beta;
+                    bz = z1 + (z2 - z1) * beta;
+                    bw = invW1 + (invW2 - invW1) * beta;
+                    buv = uvW1 + (uvW2 - uvW1) * beta;
+                    bp = pW1 + (pW2 - pW1) * beta;
+                }
+                else
+                {
+                    bx = x2 + (x3 - x2) * beta;
+                    bz = z2 + (z3 - z2) * beta;
+                    bw = invW2 + (invW3 - invW2) * beta;
+                    buv = uvW2 + (uvW3 - uvW2) * beta;
+                    bp = pW2 + (pW3 - pW2) * beta;
+                }
 
                 if (ax > bx)
                 {
-                    (ax, bx) = (bx, ax); (az, bz) = (bz, az);
-                    (an, bn) = (bn, an); (ap, bp) = (bp, ap);
+                    (ax, bx) = (bx, ax); (az, bz) = (bz, az); (aw, bw) = (bw, aw);
+                    (auv, buv) = (buv, auv); (ap, bp) = (bp, ap);
                 }
 
-                int ixStart = Math.Max((int)ax, 0);
-                int ixEnd = Math.Min((int)bx, _width - 1);
-                float dx = bx - ax;
+                int startX = (int)MathF.Ceiling(ax);
+                int endX = (int)MathF.Floor(bx);
 
-                for (int x = ixStart; x <= ixEnd; x++)
+                for (int x = startX; x <= endX; x++)
                 {
-                    float t = dx < 1f ? 0f : (x - ax) / dx;
+                    if (x < 0 || x >= _width) continue;
+                    float t = (bx - ax) < 0.0001f ? 0 : (x - ax) / (bx - ax);
                     float z = az + (bz - az) * t;
 
-                    int idx = y * _width + x;
-                    if (z < _zBuffer[idx])
+                    if (z < _zBuffer[y * _width + x])
                     {
-                        _zBuffer[idx] = z;
-                        Vector3 norm = Vector3.Normalize(an + (bn - an) * t);
-                        Vector3 pos = ap + (bp - ap) * t;
+                        _zBuffer[y * _width + x] = z;
 
-                        buffer[y * stride + x] = ComputePhongColor(norm, pos);
+                        float currentInvW = aw + (bw - aw) * t;
+                        float w = 1f / currentInvW;
+                        Vector2 uv = (auv + (buv - auv) * t) * w;
+                        Vector3 pos = (ap + (bp - ap) * t) * w;
+
+                        Vector3 texColor = _diffuseMap.Sample(uv.X, uv.Y);
+                        Vector3 normalSample = _normalMap.Sample(uv.X, uv.Y);
+
+                        Vector3 modelNormal = Vector3.Normalize(normalSample * 2.0f - Vector3.One);
+                        Vector3 worldNormal = Vector3.Normalize(Vector3.TransformNormal(modelNormal, modelMat));
+                        float ks = _specularMap.Sample(uv.X, uv.Y).X;
+
+                        buffer[y * stride + x] = CalculateColor(worldNormal, pos, texColor, ks);
                     }
                 }
             }
         }
 
-        private int ComputeLambertColor(Vector3 v1, Vector3 v2, Vector3 v3, Matrix4x4 modelMatrix)
+        private int CalculateColor(Vector3 normal, Vector3 pos, Vector3 diffuseColor, float ks)
         {
-            Vector3 w1 = Vector3.Transform(v1, modelMatrix);
-            Vector3 w2 = Vector3.Transform(v2, modelMatrix);
-            Vector3 w3 = Vector3.Transform(v3, modelMatrix);
+            Vector3 lightDir = Vector3.Normalize(_lightPos - pos);
+            Vector3 viewDir = Vector3.Normalize(_cameraPos - pos);
+            Vector3 reflectDir = Vector3.Reflect(-lightDir, normal);
 
-            Vector3 edge1 = w2 - w1;
-            Vector3 edge2 = w3 - w1;
-            Vector3 normal = Vector3.Normalize(Vector3.Cross(edge1, edge2));
+            float diff = MathF.Max(Vector3.Dot(normal, lightDir), 0f);
+            float spec = MathF.Pow(MathF.Max(Vector3.Dot(viewDir, reflectDir), 0f), Shininess);
 
-            float intensity = MathF.Max(0f, Vector3.Dot(normal, _lightDir));
+            Vector3 final = (Ka * _lightColor + Kd * diff * _lightColor + ks * spec * _lightColor) * diffuseColor;
 
-            float ambient = 0.15f;
-            float lit = ambient + (1f - ambient) * intensity;
-
-            int c = (int)(lit * 255f);
-            return unchecked((int)(0xFF000000 | ((uint)c << 16) | ((uint)c << 8) | (uint)c));
+            int r = (int)(Math.Clamp(final.X, 0, 1) * 255);
+            int g = (int)(Math.Clamp(final.Y, 0, 1) * 255);
+            int b = (int)(Math.Clamp(final.Z, 0, 1) * 255);
+            return unchecked((int)(0xFF000000u | ((uint)r << 16) | ((uint)g << 8) | (uint)b));
         }
     }
 }

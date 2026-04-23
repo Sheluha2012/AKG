@@ -12,121 +12,57 @@ namespace WpfApp1
         {
             var vertices = new List<Vector3>();
             var fileNormals = new List<Vector3>();
+            var texCoords = new List<Vector2>();
             var faces = new List<Face>();
             var culture = CultureInfo.InvariantCulture;
 
             foreach (string line in File.ReadLines(filePath))
             {
                 if (string.IsNullOrWhiteSpace(line)) continue;
+                var parts = line.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+                if (parts.Length < 2) continue;
 
-                ReadOnlySpan<char> span = line.AsMemory().Span.Trim();
-                if (span.IsEmpty || span[0] == '#') continue;
-
-                if (span.StartsWith("vn "))
+                switch (parts[0])
                 {
-                    string[] parts = line.Split(' ', StringSplitOptions.RemoveEmptyEntries);
-                    if (parts.Length >= 4)
-                    {
-                        fileNormals.Add(Vector3.Normalize(new Vector3(
-                            float.Parse(parts[1], culture),
-                            float.Parse(parts[2], culture),
-                            float.Parse(parts[3], culture)
-                        )));
-                    }
-                }
-                else if (span.StartsWith("v "))
-                {
-                    string[] parts = line.Split(' ', StringSplitOptions.RemoveEmptyEntries);
-                    if (parts.Length >= 4)
-                    {
-                        vertices.Add(new Vector3(
-                            float.Parse(parts[1], culture),
-                            float.Parse(parts[2], culture),
-                            float.Parse(parts[3], culture)
-                        ));
-                    }
-                }
-                else if (span.StartsWith("f "))
-                {
-                    string[] parts = line.Split(' ', StringSplitOptions.RemoveEmptyEntries);
-                    if (parts.Length >= 4)
-                    {
-                        var (i1, n1) = ParseObjToken(parts[1]);
-                        var (i2, n2) = ParseObjToken(parts[2]);
-                        var (i3, n3) = ParseObjToken(parts[3]);
-                        faces.Add(new Face(i1, i2, i3, n1, n2, n3));
-
-                        if (parts.Length >= 5)
+                    case "v":
+                        vertices.Add(new Vector3(float.Parse(parts[1], culture), float.Parse(parts[2], culture), float.Parse(parts[3], culture)));
+                        break;
+                    case "vt":
+                        texCoords.Add(new Vector2(float.Parse(parts[1], culture), float.Parse(parts[2], culture)));
+                        break;
+                    case "vn":
+                        fileNormals.Add(Vector3.Normalize(new Vector3(float.Parse(parts[1], culture), float.Parse(parts[2], culture), float.Parse(parts[3], culture))));
+                        break;
+                    case "f":
+                        var t1 = ParseObjToken(parts[1]);
+                        var t2 = ParseObjToken(parts[2]);
+                        var t3 = ParseObjToken(parts[3]);
+                        faces.Add(new Face(t1.v, t2.v, t3.v, t1.n, t2.n, t3.n, t1.t, t2.t, t3.t));
+                        if (parts.Length > 4)
                         {
-                            var (i4, n4) = ParseObjToken(parts[4]);
-                            faces.Add(new Face(i1, i3, i4, n1, n3, n4));
+                            var t4 = ParseObjToken(parts[4]);
+                            faces.Add(new Face(t1.v, t3.v, t4.v, t1.n, t3.n, t4.n, t1.t, t3.t, t4.t));
                         }
-                    }
+                        break;
                 }
-            }
-
-            Vector3[] normals;
-            if (fileNormals.Count > 0)
-            {
-                normals = fileNormals.ToArray();
-            }
-            else
-            {
-                normals = ComputeSmoothNormals(vertices, faces);
-                var updatedFaces = new List<Face>();
-                foreach (var f in faces)
-                    updatedFaces.Add(new Face(f.V1, f.V2, f.V3, f.V1, f.V2, f.V3));
-                faces = updatedFaces;
             }
 
             return new ModelData
             {
                 Vertices = vertices.ToArray(),
-                Normals = normals,
+                Normals = fileNormals.ToArray(),
+                TexCoords = texCoords.ToArray(),
                 Faces = faces.ToArray()
             };
         }
 
-        private static (int vIdx, int nIdx) ParseObjToken(string token)
+        private static (int v, int t, int n) ParseObjToken(string token)
         {
-            string[] parts = token.Split('/');
-
-            int vIdx = int.Parse(parts[0]);
-            vIdx = vIdx > 0 ? vIdx - 1 : 0;
-
-            int nIdx = -1;
-            if (parts.Length >= 3 && parts[2].Length > 0)
-            {
-                nIdx = int.Parse(parts[2]);
-                nIdx = nIdx > 0 ? nIdx - 1 : 0;
-            }
-
-            return (vIdx, nIdx);
-        }
-
-        private static Vector3[] ComputeSmoothNormals(List<Vector3> vertices, List<Face> faces)
-        {
-            var normals = new Vector3[vertices.Count];
-
-            foreach (var face in faces)
-            {
-                Vector3 v1 = vertices[face.V1];
-                Vector3 v2 = vertices[face.V2];
-                Vector3 v3 = vertices[face.V3];
-
-                Vector3 faceNormal = Vector3.Cross(v2 - v1, v3 - v1);
-                normals[face.V1] += faceNormal;
-                normals[face.V2] += faceNormal;
-                normals[face.V3] += faceNormal;
-            }
-
-            for (int i = 0; i < normals.Length; i++)
-            {
-                if (normals[i] != Vector3.Zero)
-                    normals[i] = Vector3.Normalize(normals[i]);
-            }
-
-            return normals;
+            string[] p = token.Split('/');
+            int v = int.Parse(p[0]) - 1;
+            int t = (p.Length > 1 && p[1] != "") ? int.Parse(p[1]) - 1 : 0;
+            int n = (p.Length > 2 && p[2] != "") ? int.Parse(p[2]) - 1 : 0;
+            return (v, t, n);
         }
     }
 }
