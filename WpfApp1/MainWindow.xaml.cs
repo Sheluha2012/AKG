@@ -25,6 +25,15 @@ namespace WpfApp1
         private float[] _zBuffer;
         private Vector3 _lightDir = Vector3.Normalize(new Vector3(0.5f, 1f, 0.8f));
 
+        private Vector3 _lightPos = new Vector3(2f, 4f, 3f);
+        private Vector3 _lightColor = new Vector3(1f, 1f, 1f);
+        private Vector3 _objectColor = new Vector3(0.8f, 0.7f, 0.6f);
+
+        private const float Ka = 0.15f;   
+        private const float Kd = 0.8f;    
+        private const float Ks = 0.5f;    
+        private const float Shininess = 32f;
+
         public MainWindow()
         {
             InitializeComponent();
@@ -183,6 +192,7 @@ namespace WpfApp1
 
                 if (c1.W < 0.1f || c2.W < 0.1f || c3.W < 0.1f) continue;
 
+                // NDC → screen
                 float nx1 = c1.X / c1.W, ny1 = c1.Y / c1.W;
                 float nx2 = c2.X / c2.W, ny2 = c2.Y / c2.W;
                 float nx3 = c3.X / c3.W, ny3 = c3.Y / c3.W;
@@ -191,12 +201,14 @@ namespace WpfApp1
                 float sx2 = (nx2 + 1f) * 0.5f * _width, sy2 = (1f - ny2) * 0.5f * _height;
                 float sx3 = (nx3 + 1f) * 0.5f * _width, sy3 = (1f - ny3) * 0.5f * _height;
 
+                // Back-face culling
                 float area = (sx2 - sx1) * (sy3 - sy1) - (sx3 - sx1) * (sy2 - sy1);
                 if (area == 0) continue;
 
                 Vector3 w1 = Vector3.Transform(model.Vertices[face.V1], modelMatrix);
                 Vector3 w2 = Vector3.Transform(model.Vertices[face.V2], modelMatrix);
                 Vector3 w3 = Vector3.Transform(model.Vertices[face.V3], modelMatrix);
+
                 Vector3 faceNormal = Vector3.Normalize(Vector3.Cross(w2 - w1, w3 - w1));
                 Vector3 viewDir = Vector3.Normalize(w1 - _cameraPos);
                 if (Vector3.Dot(faceNormal, viewDir) >= 0) continue;
@@ -205,17 +217,16 @@ namespace WpfApp1
                 float z2 = c2.Z / c2.W;
                 float z3 = c3.Z / c3.W;
 
-                int faceColor = ComputeLambertColor(
-                    model.Vertices[face.V1],
-                    model.Vertices[face.V2],
-                    model.Vertices[face.V3],
-                    modelMatrix);
+                Vector3 wn1 = Vector3.Normalize(Vector3.TransformNormal(model.Normals[face.N1], modelMatrix));
+                Vector3 wn2 = Vector3.Normalize(Vector3.TransformNormal(model.Normals[face.N2], modelMatrix));
+                Vector3 wn3 = Vector3.Normalize(Vector3.TransformNormal(model.Normals[face.N3], modelMatrix));
 
                 FillTriangleZ(buffer, stride,
                     sx1, sy1, z1,
                     sx2, sy2, z2,
                     sx3, sy3, z3,
-                    faceColor);
+                    wn1, wn2, wn3,
+                    w1, w2, w3);
             }
 
             _bitmap.AddDirtyRect(new Int32Rect(0, 0, _width, _height));
@@ -247,15 +258,39 @@ namespace WpfApp1
             return Vector4.Transform(new Vector4(vertex, 1.0f), mvp);
         }
 
-        private unsafe void FillTriangleZ(int* buffer, int stride,
-    float x1, float y1, float z1,
-    float x2, float y2, float z2,
-    float x3, float y3, float z3,
-    int color)
+        private int ComputePhongColor(Vector3 normal, Vector3 fragPos)
         {
-            if (y1 > y2) { (x1, x2) = (x2, x1); (y1, y2) = (y2, y1); (z1, z2) = (z2, z1); }
-            if (y1 > y3) { (x1, x3) = (x3, x1); (y1, y3) = (y3, y1); (z1, z3) = (z3, z1); }
-            if (y2 > y3) { (x2, x3) = (x3, x2); (y2, y3) = (y3, y2); (z2, z3) = (z3, z2); }
+            Vector3 ambient = Ka * _lightColor;
+
+            Vector3 lightDir = Vector3.Normalize(_lightPos - fragPos);
+            float diff = MathF.Max(Vector3.Dot(normal, lightDir), 0f);
+            Vector3 diffuse = Kd * diff * _lightColor;
+
+            Vector3 viewDir = Vector3.Normalize(_cameraPos - fragPos);
+
+            Vector3 reflectDir = Vector3.Reflect(-lightDir, normal);
+            float spec = MathF.Pow(MathF.Max(Vector3.Dot(viewDir, reflectDir), 0f), Shininess);
+            Vector3 specular = Ks * spec * _lightColor;
+
+            Vector3 result = (ambient + diffuse + specular) * _objectColor;
+
+            int r = (int)(Math.Clamp(result.X, 0f, 1f) * 255f);
+            int g = (int)(Math.Clamp(result.Y, 0f, 1f) * 255f);
+            int b = (int)(Math.Clamp(result.Z, 0f, 1f) * 255f);
+
+            return unchecked((int)(0xFF000000u | ((uint)r << 16) | ((uint)g << 8) | (uint)b));
+        }
+
+        private unsafe void FillTriangleZ(int* buffer, int stride,
+            float x1, float y1, float z1,
+            float x2, float y2, float z2,
+            float x3, float y3, float z3,
+            Vector3 n1, Vector3 n2, Vector3 n3,
+            Vector3 p1, Vector3 p2, Vector3 p3)
+        {
+            if (y1 > y2) { (x1, x2) = (x2, x1); (y1, y2) = (y2, y1); (z1, z2) = (z2, z1); (n1, n2) = (n2, n1); (p1, p2) = (p2, p1); }
+            if (y1 > y3) { (x1, x3) = (x3, x1); (y1, y3) = (y3, y1); (z1, z3) = (z3, z1); (n1, n3) = (n3, n1); (p1, p3) = (p3, p1); }
+            if (y2 > y3) { (x2, x3) = (x3, x2); (y2, y3) = (y3, y2); (z2, z3) = (z3, z2); (n2, n3) = (n3, n2); (p2, p3) = (p3, p2); }
 
             int iy1 = (int)y1, iy2 = (int)y2, iy3 = (int)y3;
             float totalH = y3 - y1;
@@ -266,22 +301,34 @@ namespace WpfApp1
                 if (y < 0 || y >= _height) continue;
 
                 bool inBottom = y <= iy2;
-                float segH = inBottom ? (y2 - y1) : (y3 - y2);
-
                 float alpha = (y - y1) / totalH;
-                float beta = segH < 1f ? 0f : inBottom
-                    ? (y - y1) / (y2 - y1)
-                    : (y - y2) / (y3 - y2);
+                float beta = inBottom
+                    ? ((y2 - y1) < 1f ? 0f : (y - y1) / (y2 - y1))
+                    : ((y3 - y2) < 1f ? 0f : (y - y2) / (y3 - y2));
 
-                float ax = x1 + (x3 - x1) * alpha, az = z1 + (z3 - z1) * alpha;
+                float ax = x1 + (x3 - x1) * alpha;
+                float az = z1 + (z3 - z1) * alpha;
+                Vector3 an = Vector3.Normalize(n1 + (n3 - n1) * alpha);
+                Vector3 ap = p1 + (p3 - p1) * alpha;
+
                 float bx = inBottom
                     ? x1 + (x2 - x1) * beta
                     : x2 + (x3 - x2) * beta;
                 float bz = inBottom
                     ? z1 + (z2 - z1) * beta
                     : z2 + (z3 - z2) * beta;
+                Vector3 bn = Vector3.Normalize(inBottom
+                    ? n1 + (n2 - n1) * beta
+                    : n2 + (n3 - n2) * beta);
+                Vector3 bp = inBottom
+                    ? p1 + (p2 - p1) * beta
+                    : p2 + (p3 - p2) * beta;
 
-                if (ax > bx) { (ax, bx) = (bx, ax); (az, bz) = (bz, az); }
+                if (ax > bx)
+                {
+                    (ax, bx) = (bx, ax); (az, bz) = (bz, az);
+                    (an, bn) = (bn, an); (ap, bp) = (bp, ap);
+                }
 
                 int ixStart = Math.Max((int)ax, 0);
                 int ixEnd = Math.Min((int)bx, _width - 1);
@@ -296,7 +343,10 @@ namespace WpfApp1
                     if (z < _zBuffer[idx])
                     {
                         _zBuffer[idx] = z;
-                        buffer[y * stride + x] = color;
+                        Vector3 norm = Vector3.Normalize(an + (bn - an) * t);
+                        Vector3 pos = ap + (bp - ap) * t;
+
+                        buffer[y * stride + x] = ComputePhongColor(norm, pos);
                     }
                 }
             }
